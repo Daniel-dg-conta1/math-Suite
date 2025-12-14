@@ -1,24 +1,69 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import VectoraApp from './VectoraApp';
 import TrigoApp from './TrigoApp';
 import LoginScreen from './components/LoginScreen';
 import { User } from './types';
+import { supabase } from './utils/supabaseClient';
 
 const App: React.FC = () => {
   // --- AUTH STATE ---
   const [user, setUser] = useState<User | null>(null);
+  const [loadingSession, setLoadingSession] = useState(true);
   const [currentModule, setCurrentModule] = useState<'home' | 'vectora' | 'trigo'>('home');
 
-  // --- MOCK AUTH HANDLERS ---
-  // Nota para o Desenvolvedor: Integre aqui o Firebase Auth ou Auth0.
-  const handleLoginGoogle = () => {
-    // Simulating Google Auth Response
-    setUser({
-      id: 'g_12345',
-      name: 'Professor Alex',
-      email: 'alex.math@escola.com',
-      avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alex' // Generates a consistent avatar
+  // --- SUPABASE AUTH LISTENER ---
+  useEffect(() => {
+    // 1. Check active session on load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser({
+            id: session.user.id,
+            name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'Usuário',
+            email: session.user.email || '',
+            avatarUrl: session.user.user_metadata.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
+        });
+      }
+      setLoadingSession(false);
+    }).catch(err => {
+      console.warn("Failed to check session:", err);
+      setLoadingSession(false);
     });
+
+    // 2. Listen for auth changes (Login, Logout, Auto-refresh)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+         setUser({
+            id: session.user.id,
+            name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'Usuário',
+            email: session.user.email || '',
+            avatarUrl: session.user.user_metadata.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${session.user.id}`
+        });
+      } else {
+        setUser(null);
+        setCurrentModule('home');
+      }
+      setLoadingSession(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // --- HANDLERS ---
+  const handleLoginGoogle = async () => {
+    try {
+        const { error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+                redirectTo: window.location.origin // Retorna para a mesma página após login
+            }
+        });
+        if (error) throw error;
+    } catch (error) {
+        console.error("Erro ao logar com Google:", error);
+        alert("Erro ao conectar com Google. Verifique se o projeto Supabase está configurado corretamente.");
+    }
   };
 
   const handleLoginGuest = () => {
@@ -30,10 +75,24 @@ const App: React.FC = () => {
     });
   };
 
-  const handleLogout = () => {
-    setUser(null);
+  const handleLogout = async () => {
+    // If guest, just clear state. If Supabase user, call signOut.
+    if (user?.id === 'guest') {
+        setUser(null);
+    } else {
+        await supabase.auth.signOut();
+    }
     setCurrentModule('home');
   };
+
+  // --- LOADING SCREEN ---
+  if (loadingSession) {
+      return (
+          <div className="h-screen w-full flex items-center justify-center bg-[#F5F7FA]">
+              <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+          </div>
+      );
+  }
 
   // --- RENDER LOGIN IF NO USER ---
   if (!user) {
